@@ -1,0 +1,98 @@
+// Prisma schema for the secure GL Journal module.
+// Design notes:
+// - All relations use foreign keys enforced by the database, not just app code.
+// - AuditLog rows are never updated or deleted by the app (append-only trail).
+// - Money fields use Decimal, never float, to avoid rounding errors.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN       // full access, including user management
+  ACCOUNTANT  // can create/submit journals ("maker")
+  APPROVER    // can approve/reject/post/reverse ("checker")
+  VIEWER      // read-only
+}
+
+enum JournalStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  POSTED
+  REVERSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(ACCOUNTANT)
+  createdAt    DateTime @default(now())
+
+  journalsCreated  Journal[] @relation("CreatedBy")
+  journalsApproved Journal[] @relation("ApprovedBy")
+  auditLogs        AuditLog[]
+}
+
+model Journal {
+  id            String        @id @default(cuid())
+  reference     String?
+  description   String?
+  effectiveDate DateTime
+  status        JournalStatus @default(DRAFT)
+
+  createdById  String
+  createdBy    User     @relation("CreatedBy", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy   User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  // When this journal is itself a reversal of another posted journal
+  reversesJournalId String?  @unique
+  reversesJournal   Journal? @relation("Reversal", fields: [reversesJournalId], references: [id])
+  reversedBy        Journal? @relation("Reversal")
+
+  lines     JournalLine[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdById])
+}
+
+model JournalLine {
+  id          String  @id @default(cuid())
+  journalId   String
+  journal     Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  accountCode String
+  accountDesc String?
+  debit       Decimal @default(0) @db.Decimal(18, 2)
+  credit      Decimal @default(0) @db.Decimal(18, 2)
+  description String?
+
+  @@index([journalId])
+}
+
+// Append-only. The app must only ever INSERT here, never UPDATE/DELETE,
+// so it stays a trustworthy record of what actually happened.
+model AuditLog {
+  id            String   @id @default(cuid())
+  journalId     String
+  journal       Journal  @relation(fields: [journalId], references: [id])
+  action        String // e.g. "CREATED", "SUBMITTED", "APPROVED", "REJECTED", "POSTED", "REVERSED"
+  performedById String
+  performedBy   User     @relation(fields: [performedById], references: [id])
+  remark        String?
+  createdAt     DateTime @default(now())
+
+  @@index([journalId])
+}
