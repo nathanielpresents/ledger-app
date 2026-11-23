@@ -43,7 +43,7 @@ export function canApproveOrReject(role: Role, userId: string, journal: Journal)
   return role === "APPROVER" || role === "ADMIN";
 }
 
-export function canPost(role: Role, journal: Journal) {
+export function canReverse(role: Role, journal: Journal & { reversedBy?: { id: string } | null }) {
   if (journal.status !== "APPROVED") return false;
   return role === "APPROVER" || role === "ADMIN";
 }
